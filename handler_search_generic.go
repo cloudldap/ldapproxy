@@ -112,15 +112,15 @@ func (s *resolver) resolve(packet message.Filter) (string, error) {
 
 			if attrName == "memberof" {
 				// collect sub groups
-				results := []string{}
+				results := set{}
 				err := s.collectMemberDN(attrValue, &results)
 				if err != nil {
 					return "", err
 				}
 
-				if len(results) > 0 {
+				if results.size() > 0 {
 					ret := "(|"
-					for _, v := range results {
+					for _, v := range results.list() {
 						ret += "("
 						ret += attrName
 						ret += "="
@@ -135,15 +135,15 @@ func (s *resolver) resolve(packet message.Filter) (string, error) {
 
 			if attrName == "member" || attrName == "uniquemember" {
 				// collect parent groups
-				results := []string{}
+				results := set{}
 				err := s.collectMemberOfDN(attrValue, &results)
 				if err != nil {
 					return "", err
 				}
 
-				if len(results) > 0 {
+				if results.size() > 0 {
 					ret := "(|"
-					for _, v := range results {
+					for _, v := range results.list() {
 						ret += "("
 						ret += attrName
 						ret += "="
@@ -161,7 +161,12 @@ func (s *resolver) resolve(packet message.Filter) (string, error) {
 	return "", nil
 }
 
-func (s *resolver) collectMemberDN(memberDn string, results *[]string) error {
+func (s *resolver) collectMemberDN(memberDn string, results *set) error {
+	if results.contains(memberDn) {
+		log.Printf("warn: detected cyclic membership: %s", memberDn)
+		return nil
+	}
+
 	search := ldap.NewSearchRequest(
 		memberDn,
 		ldap.ScopeBaseObject,
@@ -178,7 +183,7 @@ func (s *resolver) collectMemberDN(memberDn string, results *[]string) error {
 		for _, entry := range sr.Entries {
 			members := entry.GetAttributeValues("member")
 			if len(members) > 0 {
-				*results = append(*results, memberDn)
+				results.add(memberDn)
 			}
 			for _, m := range members {
 				if err := s.collectMemberDN(m, results); err != nil {
@@ -188,7 +193,7 @@ func (s *resolver) collectMemberDN(memberDn string, results *[]string) error {
 
 			uniqueMembers := entry.GetAttributeValues("uniqueMember")
 			if len(uniqueMembers) > 0 {
-				*results = append(*results, memberDn)
+				results.add(memberDn)
 			}
 			for _, m := range uniqueMembers {
 				if err := s.collectMemberDN(m, results); err != nil {
@@ -205,7 +210,12 @@ func (s *resolver) collectMemberDN(memberDn string, results *[]string) error {
 	return nil
 }
 
-func (s *resolver) collectMemberOfDN(memberOfDn string, results *[]string) error {
+func (s *resolver) collectMemberOfDN(memberOfDn string, results *set) error {
+	if results.contains(memberOfDn) {
+		log.Printf("warn: detected cyclic membership: %s", memberOfDn)
+		return nil
+	}
+
 	search := ldap.NewSearchRequest(
 		memberOfDn,
 		ldap.ScopeBaseObject,
@@ -219,6 +229,9 @@ func (s *resolver) collectMemberOfDN(memberOfDn string, results *[]string) error
 	)
 
 	err := ldapsearch(s.conn, search, 500, func(sr *ldap.SearchResult) error {
+		// Exists the parent, add it
+		results.add(memberOfDn)
+
 		for _, entry := range sr.Entries {
 			memberOfs := entry.GetAttributeValues("memberOf")
 			for _, m := range memberOfs {
@@ -237,10 +250,32 @@ func (s *resolver) collectMemberOfDN(memberOfDn string, results *[]string) error
 		return nil
 	}
 
-	// Exists the parent, add list
-	*results = append(*results, memberOfDn)
-
 	return nil
+}
+
+type set map[string]struct{}
+
+func (s set) add(str string) {
+	s[str] = struct{}{}
+}
+
+func (s set) size() int {
+	return len(s)
+}
+
+func (s set) contains(str string) bool {
+	_, ok := s[str]
+	return ok
+}
+
+func (s set) list() []string {
+	rtn := make([]string, len(s))
+	i := 0
+	for k, _ := range s {
+		rtn[i] = k
+		i++
+	}
+	return rtn
 }
 
 func ldapsearch(conn *ldap.Conn, searchRequest *ldap.SearchRequest, pagingSize uint32, callback func(*ldap.SearchResult) error) error {
