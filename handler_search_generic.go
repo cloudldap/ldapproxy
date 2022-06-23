@@ -19,9 +19,23 @@ func handleSearch(s *Server, w ldapserver.ResponseWriter, m *ldapserver.Message)
 		timeLimit = requestedTimeLimit
 	}
 
+	currentUser := GetAuthSession(m).DN
+	conn, err := s.GetBackendConn(m, currentUser)
+	if err != nil {
+		res := ldapserver.NewSearchResultDoneResponse(ldapserver.LDAPResultUnwillingToPerform)
+		w.Write(res)
+		return
+	}
+	resolver := &resolver{conn}
+	filter, err := r.FilterStringWithResolver(resolver.resolve)
+	if err != nil {
+		res := ldapserver.NewSearchResultDoneResponse(ldapserver.LDAPResultUnwillingToPerform)
+		w.Write(res)
+		return
+	}
+
 	baseDN := string(r.BaseObject())
 	scope := int(r.Scope())
-	filter := string(r.FilterString())
 	attrs := make([]string, len(r.Attributes()))
 	for i, v := range r.Attributes() {
 		attrs[i] = string(v)
@@ -31,8 +45,6 @@ func handleSearch(s *Server, w ldapserver.ResponseWriter, m *ldapserver.Message)
 	if requestSizeLimit > 0 {
 		sizeLimit = requestSizeLimit
 	}
-
-	currentUser := GetAuthSession(m).DN
 
 	log.Printf("info: [%s] handleSearch baseDN=%s, scope=%d, requestedSizeLimit=%d, filter=%s, attributes=%s, requestedTimeLimit=%d, timeLimit=%d",
 		currentUser, baseDN, scope, requestSizeLimit, filter, attrs, requestedTimeLimit, timeLimit)
@@ -48,13 +60,6 @@ func handleSearch(s *Server, w ldapserver.ResponseWriter, m *ldapserver.Message)
 		attrs,  // A list attributes to retrieve
 		nil,
 	)
-
-	conn, err := s.GetBackendConn(m, currentUser)
-	if err != nil {
-		res := ldapserver.NewSearchResultDoneResponse(ldapserver.LDAPResultUnwillingToPerform)
-		w.Write(res)
-		return
-	}
 
 	err = ldapsearch(conn, search, uint32(sizeLimit), func(sr *ldap.SearchResult) error {
 		for _, v := range sr.Entries {
@@ -88,6 +93,86 @@ func handleSearch(s *Server, w ldapserver.ResponseWriter, m *ldapserver.Message)
 
 	res := ldapserver.NewSearchResultDoneResponse(ldapserver.LDAPResultSuccess)
 	w.Write(res)
+}
+
+type resolver struct {
+	conn *ldap.Conn
+}
+
+func (s *resolver) resolve(packet message.Filter) (string, error) {
+	switch f := packet.(type) {
+	case message.FilterExtensibleMatch:
+		mr := string(*f.MatchingRule())
+
+		// Support nested membership
+		if mr == "1.2.840.113556.1.4.1941" {
+			attrName := string(*f.Type())
+			attrValue := string(f.MatchValue())
+
+			if attrName == "memberOf" {
+				results := []string{}
+				err := s.collectMemberDN(attrValue, &results)
+				if err != nil {
+					return "", err
+				}
+
+				if len(results) > 0 {
+					ret := "(|"
+					for _, v := range results {
+						ret += "("
+						ret += attrName
+						ret += "="
+						ret += v
+						ret += ")"
+					}
+					ret += ")"
+
+					return ret, nil
+				}
+			}
+		}
+	}
+
+	return "", nil
+}
+
+func (s *resolver) collectMemberDN(memberDn string, results *[]string) error {
+	search := ldap.NewSearchRequest(
+		memberDn,
+		ldap.ScopeBaseObject,
+		ldap.NeverDerefAliases,
+		500, // Size Limit
+		0,   // Time Limit
+		false,
+		"(|(objectclass=groupOfNames)(objectclass=groupOfUniqueNames))", // The filter to apply
+		[]string{"member", "uniqueMember"},                              // A list attributes to retrieve
+		nil,
+	)
+
+	return ldapsearch(s.conn, search, 500, func(sr *ldap.SearchResult) error {
+		for _, entry := range sr.Entries {
+			members := entry.GetAttributeValues("member")
+			if len(members) > 0 {
+				*results = append(*results, memberDn)
+			}
+			for _, m := range members {
+				if err := s.collectMemberDN(m, results); err != nil {
+					return err
+				}
+			}
+
+			uniqueMembers := entry.GetAttributeValues("uniqueMember")
+			if len(uniqueMembers) > 0 {
+				*results = append(*results, memberDn)
+			}
+			for _, m := range uniqueMembers {
+				if err := s.collectMemberDN(m, results); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func ldapsearch(conn *ldap.Conn, searchRequest *ldap.SearchRequest, pagingSize uint32, callback func(*ldap.SearchResult) error) error {
