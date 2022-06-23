@@ -1,0 +1,12 @@
+github.com/cloudldap/goldap/message v0.0.0-20220624044827-7916bfae1b74 h1:pNMxc9vzyKzrOHhg484/29pljZ56Xfkz7Kf36HQKKKI=
+github.com/cloudldap/goldap/message v0.0.0-20220624044827-7916bfae1b74/go.mod h1:yEaA7C+UQ8Jb76NW0JyFmbO/w31Vz+PLnk84Y8hQ9pI=
+github.com/cloudldap/ldapserver v1.1.0 h1:YrBwYlSrQh6m3OplPpmtxBWAGJmqCNWgQ2i9i5Y6vT0=
+github.com/cloudldap/ldapserver v1.1.0/go.mod h1:il8cSrx1ZN8B2m6BENO/9xY6E9PcVJObSDy8ev6OKpw=
+github.com/comail/colog v0.0.0-20160416085026-fba8e7b1f46c h1:bzYQ6WpR+t35/y19HUkolcg7SYeWZ15IclC9Z4naGHI=
+github.com/comail/colog v0.0.0-20160416085026-fba8e7b1f46c/go.mod h1:1WwgAwMKQLYG5I2FBhpVx94YTOAuB2W59IZ7REjSE6Y=
+github.com/go-ldap/ldap v3.0.3+incompatible h1:HTeSZO8hWMS1Rgb2Ziku6b8a7qRIZZMHjsvuZyatzwk=
+github.com/go-ldap/ldap v3.0.3+incompatible/go.mod h1:qfd9rJvER9Q0/D/Sqn1DfHRoBp40uXYvFoEVrNEPqRc=
+github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
+gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d h1:TxyelI5cVkbREznMhfzycHdkp5cLA7DpE+GKjSslYhM=
+gopkg.in/asn1-ber.v1 v1.0.0-20181015200546-f715ec2f112d/go.mod h1:cuepJuh7vyXfUyUwEgHQXw849cJrilpS5NeIjOWESAw=
