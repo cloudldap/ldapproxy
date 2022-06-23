@@ -2,6 +2,7 @@ package server
 
 import (
 	"log"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -106,12 +107,36 @@ func (s *resolver) resolve(packet message.Filter) (string, error) {
 
 		// Support nested membership
 		if mr == "1.2.840.113556.1.4.1941" {
-			attrName := string(*f.Type())
+			attrName := strings.ToLower(string(*f.Type()))
 			attrValue := string(f.MatchValue())
 
-			if attrName == "memberOf" {
+			if attrName == "memberof" {
+				// collect sub groups
 				results := []string{}
 				err := s.collectMemberDN(attrValue, &results)
+				if err != nil {
+					return "", err
+				}
+
+				if len(results) > 0 {
+					ret := "(|"
+					for _, v := range results {
+						ret += "("
+						ret += attrName
+						ret += "="
+						ret += v
+						ret += ")"
+					}
+					ret += ")"
+
+					return ret, nil
+				}
+			}
+
+			if attrName == "member" || attrName == "uniquemember" {
+				// collect parent groups
+				results := []string{}
+				err := s.collectMemberOfDN(attrValue, &results)
 				if err != nil {
 					return "", err
 				}
@@ -144,12 +169,12 @@ func (s *resolver) collectMemberDN(memberDn string, results *[]string) error {
 		500, // Size Limit
 		0,   // Time Limit
 		false,
-		"(|(objectclass=groupOfNames)(objectclass=groupOfUniqueNames))", // The filter to apply
-		[]string{"member", "uniqueMember"},                              // A list attributes to retrieve
+		"(|(objectclass=groupOfNames)(objectclass=groupOfUniqueNames))",
+		[]string{"member", "uniqueMember"},
 		nil,
 	)
 
-	return ldapsearch(s.conn, search, 500, func(sr *ldap.SearchResult) error {
+	err := ldapsearch(s.conn, search, 500, func(sr *ldap.SearchResult) error {
 		for _, entry := range sr.Entries {
 			members := entry.GetAttributeValues("member")
 			if len(members) > 0 {
@@ -173,6 +198,49 @@ func (s *resolver) collectMemberDN(memberDn string, results *[]string) error {
 		}
 		return nil
 	})
+
+	if !ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
+		return err
+	}
+	return nil
+}
+
+func (s *resolver) collectMemberOfDN(memberOfDn string, results *[]string) error {
+	search := ldap.NewSearchRequest(
+		memberOfDn,
+		ldap.ScopeBaseObject,
+		ldap.NeverDerefAliases,
+		500, // Size Limit
+		0,   // Time Limit
+		false,
+		"(|(objectclass=groupOfNames)(objectclass=groupOfUniqueNames))",
+		[]string{"memberOf"},
+		nil,
+	)
+
+	err := ldapsearch(s.conn, search, 500, func(sr *ldap.SearchResult) error {
+		for _, entry := range sr.Entries {
+			memberOfs := entry.GetAttributeValues("memberOf")
+			for _, m := range memberOfs {
+				if err := s.collectMemberOfDN(m, results); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		if !ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
+			return err
+		}
+		return nil
+	}
+
+	// Exists the parent, add list
+	*results = append(*results, memberOfDn)
+
+	return nil
 }
 
 func ldapsearch(conn *ldap.Conn, searchRequest *ldap.SearchRequest, pagingSize uint32, callback func(*ldap.SearchResult) error) error {
